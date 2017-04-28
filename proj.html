@@ -140,6 +140,9 @@ $(document).ready(function () {
 <pre class="r"><code>suppressMessages(library(reshape2));suppressMessages(library(data.table))
 suppressMessages(library(caret)) ;suppressMessages(library(randomForest))
 suppressMessages(library(MASS))
+
+suppressMessages(library(nnet));suppressMessages(library(e1071))
+suppressMessages(library(deepnet))
 if (!file.exists('pml-training.csv')) {
         download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 
                       'pml-training.csv')
@@ -179,6 +182,8 @@ suppressMessages(library(parallel))
 suppressMessages(library(doParallel))
 #cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 cluster &lt;- makeCluster(detectCores()) # use all cores in the system
+# All 4 cores are used
+
 registerDoParallel(cluster)
 # para_stop() and para_start need to be called to restart the back-end worker to
 # release unused memory allocated from  previous caluclation.
@@ -283,7 +288,6 @@ para_stop(cluster);cluster&lt;-para_start()</code></pre>
 <li>Model candidate: svm with default cross validateion</li>
 </ul>
 <pre class="r"><code>## e1071
-suppressMessages(library(e1071))
 start.t &lt;- proc.time()[3]
 fit.svm &lt;- svm(classe~., data=training.4)
 per.list&lt;-mycomb(per.list, fit.svm, 'svm',  proc.time()[3] - start.t, training.4, validating)
@@ -331,8 +335,7 @@ para_stop(cluster);cluster&lt;-para_start()</code></pre>
 <ul>
 <li>Model candidate: deepnet</li>
 </ul>
-<pre class="r"><code>suppressMessages(library(deepnet))
-start.t &lt;- proc.time()[3]
+<pre class="r"><code>start.t &lt;- proc.time()[3]
 fit.dnn &lt;- train(classe~., data=training.4,method='dnn')
 per.list&lt;-mycomb(per.list, fit.dnn, 'dnn',  proc.time()[3] - start.t, training.4, validating)
 
@@ -340,47 +343,53 @@ para_stop(cluster);cluster&lt;-para_start()</code></pre>
 <ul>
 <li>Model candidate: nnet</li>
 </ul>
-<pre class="r"><code>suppressMessages(library(nnet))
-
-start.t &lt;- proc.time()[3]
+<pre class="r"><code>start.t &lt;- proc.time()[3]
 fit.nnet &lt;- train(classe~., data=training.4,method='pcaNNet')
 per.list&lt;-mycomb(per.list, fit.nnet, 'nnet',  proc.time()[3] - start.t, training.4, validating)
 
 para_stop(cluster);cluster&lt;-para_start()</code></pre>
+<div id="model-accuracy-and-computing-time" class="section level3">
+<h3>Model accuracy and computing time</h3>
+<p>NOTE: the number after the model name indicate the cross validation number(fold)</p>
 <pre class="r"><code># display model perforamnce 
 rownames(per.list) &lt;-NULL; per.list</code></pre>
 <pre><code>##       model Compute.duration Accur.train Accur.validation
-## 1       rf3           104.27   1.0000000        0.9960245
-## 2      rf10           307.71   1.0000000        0.9964322
-## 3      rf25           770.81   1.0000000        0.9960245
-## 4      lda3            10.62   0.7220750        0.7096840
-## 5      gbm3            59.73   0.9927640        0.9852192
-## 6     gbm10           144.30   0.9924582        0.9849134
-## 7     gbm25           321.91   0.9935793        0.9843017
-## 8     rpart            16.57   0.4966368        0.4932722
-## 9       svm            18.70   0.9467998        0.9288481
-## 10     svm3            38.90   0.9467998        0.9288481
-## 11    svm10           106.98   0.9467998        0.9288481
-## 12    svm25           233.53   0.9467998        0.9288481
-## 13      FDA           218.46   0.9368121        0.9302752
-## 14 bayesglm           239.61   0.4081737        0.4058104
-## 15      dnn           133.10   0.2913779        0.2933741
-## 16     nnet           135.65   0.2843457        0.2844037</code></pre>
+## 1       rf3           106.01   1.0000000        0.9960245
+## 2      rf10           316.70   1.0000000        0.9964322
+## 3      rf25           782.28   1.0000000        0.9960245
+## 4      lda3            10.11   0.7220750        0.7096840
+## 5      gbm3            54.69   0.9927640        0.9852192
+## 6     gbm10           139.67   0.9924582        0.9849134
+## 7     gbm25           323.79   0.9935793        0.9843017
+## 8     rpart            16.08   0.4966368        0.4932722
+## 9       svm            20.44   0.9467998        0.9288481
+## 10     svm3            44.11   0.9467998        0.9288481
+## 11    svm10           111.24   0.9467998        0.9288481
+## 12    svm25           231.79   0.9467998        0.9288481
+## 13      FDA           221.43   0.9368121        0.9302752
+## 14 bayesglm           246.25   0.4081737        0.4058104
+## 15      dnn           136.71   0.2913779        0.2933741
+## 16     nnet           139.54   0.2843457        0.2844037</code></pre>
+</div>
 </div>
 <div id="module-evaluation-and-selection" class="section level2">
 <h2>Module evaluation and selection</h2>
-<div id="modeling-method-evaulation" class="section level3">
-<h3>Modeling method evaulation</h3>
+<div id="modeling-method-evaulation-and-consideration" class="section level3">
+<h3>Modeling method evaulation and consideration</h3>
 <ul>
-<li>Random forest have the best prection accuracy</li>
+<li>Random forest have the best prection accuracy.</li>
 <li>Random forest with different cross validation bagging have no significant difference on accuracy, with different computing time.</li>
-<li>SVM have lowest CPU time usage, but with not the best accuracy. It could be an candadite for model stacking with other models.</li>
-<li>Among different method, as bigger bagging number increase, computing time increase.</li>
-<li>With given model, no significent change on accuracy as bagging number increase. It could cause by big sample number in traning (about 9000 samples)</li>
+<li>Gbm also have pretty good prediction accuracy on training dataset and validation setset (1 percent lower than random forest). It is only use excution time compare to random forest. It is pretty good alternative on time constrain scenario.</li>
+<li><strong>Without</strong> cross validation, the decision tree rpart only give 50% accuracy on traning dataset, and the same accuracy on the validation dataset. It is stable, given 9000+ observation for model training, but with big bias.</li>
+<li>SVM have very low CPU time usage(only 1 CPU core are used in this package installation), but with not the best accuracy. It could be an candadite for model stacking with other models.</li>
+<li>SVM with default 0 cross validation have same accuracy as with different number (3, 10, 25) of cross validtion. Though close, it never reach the accraucy of random forest model.</li>
+<li>Among different method, as bigger cross validation number increase, computing time increase.</li>
+<li>With given model, no significent change on accuracy as cross validation increase. It could cause by big sample number in traning (about 9000 samples)</li>
+<li>For most models evaluated, the prediction accuracy difference between training set and validation set are less than 2%, which indicate no significant over-fitting.</li>
 </ul>
 </div>
-<div id="model-method-staking-consideration" class="section level3">
-<h3>Model method staking consideration</h3>
+<div id="model-method-selection-consideration" class="section level3">
+<h3>Model method selection consideration</h3>
 <p>Since random forest is significant accurate than other model method. With consideration of computation time, model stacking is considered.</p>
 </div>
 <div id="model-selection" class="section level3">

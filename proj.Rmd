@@ -1,0 +1,325 @@
+---
+title: "R8-w4-Prediction Assignment Writeup"
+subtitle: "Human Excise Activity prediction/Recogonzation"
+author: "Steve Jin"
+date: "April 25, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, cache=F}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(2017-04-25)
+```
+
+## Summary
+
+This paper describe a statical machine learning method to predict/recognition of human excicse activity(Weight Lifting). With the dataset provided, random forest with cross validation count 3 is found be the best one according accuricy and computation cost balance.
+
+Machine learning training data contains 19662 observation from 6 people on 5 different type of activities. Half of the training dataset are used as model training, and half for validation. Best model is selected on: 1) accuracy, and b) CPU usage. 
+
+In the final test, it prediction 20 test obervations with 100% accuray.
+
+
+## About the data
+
+The data train data and test dataset are come from <http://groupware.les.inf.puc-rio.br/har>
+
+
+## Data prepration
+
+```{r cache=F,warning=F }
+suppressMessages(library(reshape2));suppressMessages(library(data.table))
+suppressMessages(library(caret)) ;suppressMessages(library(randomForest))
+suppressMessages(library(MASS))
+
+suppressMessages(library(nnet));suppressMessages(library(e1071))
+suppressMessages(library(deepnet))
+if (!file.exists('pml-training.csv')) {
+        download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 
+                      'pml-training.csv')
+}
+
+```
+
+Training data contains not only sensor data fields, but also some audit information, like *user*, *time* and etc. Those information have nothing to do with the prediction, hence are removed. And the *new_windows* column is charactor value contains 'yes' and 'no', also convert to integer.
+
+```{r cache=T,warning=F, message=F}
+training <- data.frame(fread('pml-training.csv'))
+training<-training[,-c(1:5)]
+training$classe <- as.factor(training$classe)
+training$new_window <- as.numeric(as.factor(training$new_window))
+```
+
+When explore data, for certain columns/variables, there are big percentage NA and blank. We tried to train and predict without those columns (column removed) that has NA and blank. Acutally, the predicion accurrcy is good.
+
+```{r cache=F ,warning=F, message=F}
+# check NA value columns
+test.NA <- melt(apply(training, 2, function(x) mean(is.na(x))))
+test.NA$name <- rownames(test.NA)
+col.has.NA <- subset(test.NA, value > 0 )
+# remove NA variables
+training.2  <- training[, ! names(training) %in% col.has.NA$name]
+# check blank value columns
+test.blank <- melt(apply(training.2, 2, function(x) mean(x == '')))
+test.blank$name <- rownames(test.blank)
+col.has.blank <- subset(test.blank, value > 0 )
+# remove NA variables
+training.3  <- training.2[, ! names(training.2) %in% col.has.blank$name]
+training.3<-training.3[complete.cases(training.3),]
+```
+
+Since we have enough observation, we split the training data set half-half to model traing and validation.
+
+```{r cache=F ,warning=F, message=F}
+# cut training data set to training and validating
+inTrain <- createDataPartition(training.3$classe, p=.5,  list=FALSE)
+training.4 <- training.3[inTrain,]
+validating <- training.3[-inTrain,]
+```
+
+## Multiple core usage during model training
+
+Multiple cores are used with package doParallel and parallel.
+```{r  warning=F, message=F}
+## parallel
+## URL: https://github.com/lgreski/datasciencectacontent/blob/master/markdown/
+##      pml-randomForestPerformance.md
+suppressMessages(library(parallel))
+suppressMessages(library(doParallel))
+#cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+cluster <- makeCluster(detectCores()) # use all cores in the system
+# All 4 cores are used
+
+registerDoParallel(cluster)
+# para_stop() and para_start need to be called to restart the back-end worker to
+# release unused memory allocated from  previous caluclation.
+para_stop <- function(x) {
+        stopCluster(x);        stopImplicitCluster()
+}
+para_start <- function(){
+        cluster <- makeCluster(detectCores()) # convention to leave 1 core for OS
+        registerDoParallel(cluster);        cluster
+}
+
+mycomb <-function (the.list, mod, mod.name, cpu.time, training.set, validation.set) {
+    rbind(the.list, data.frame('model' = mod.name, 'Compute.duration' = cpu.time,
+        'Accur.train' = mean(predict(mod, newdata=training.set) == training.set$classe),
+        'Accur.validation' = mean(predict(mod, newdata=validation.set) ==validation.set$classe)))
+}
+```
+
+## Model method exporiation
+
+16 classification models (with different parameters) are selected for evalueting on accuracy and time of compuation.
+Accuracy are calculate on both the training dataset and validation dataset with the model.
+
+```{r cache=T,warning=F, message=F}
+per.list<-data.frame('model'=character(), 'Compute.duration'=numeric(), 
+                  'Accur.train'=numeric(), 'Accur.validation'=numeric())
+```
+
+* Model candidate: random forest with cross validateion 3
+```{r rf3, cache=T,warning=F, message=F}
+para_stop(cluster);cluster<-para_start()
+start.t <- proc.time()[3]
+fit.rf3<-train(classe~., method='rf', training.4, 
+               trControl=trainControl(method = "cv",number = 3,allowParallel = TRUE)) 
+per.list<-mycomb(per.list, fit.rf3, 'rf3', proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+
+```
+
+* Model candidate: random forest with cross validateion 10
+```{r rf10, cache=T,warning=F, message=F}
+#fit.rf10
+start.t <- proc.time()[3]
+fit.rf10<-train(classe~., method='rf', training.4, 
+                trControl=trainControl(method = "cv",number = 10,allowParallel = TRUE))  
+per.list<-mycomb(per.list, fit.rf10,'rf10',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: random forest with cross validateion 25
+```{r rf25, cache=T,warning=F, message=F}
+#fit.rf25
+start.t <- proc.time()[3]
+fit.rf25<-train(classe~., method='rf', training.4, 
+                trControl=trainControl(method = "cv",number = 25,allowParallel = TRUE))  
+per.list<-mycomb(per.list, fit.rf25,'rf25',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: lda
+```{r lda, cache=T,warning=F, message=F}
+## lda
+start.t <- proc.time()[3]
+fit.lda3<-train(classe~., method='lda', training.4, 
+                trControl=trainControl(method = "cv",number = 3,allowParallel = TRUE))  
+per.list<-mycomb(per.list, fit.lda3,'lda3',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: gbm with cross validateion 3
+```{r gbm3, cache=T,warning=F, message=F}
+## gbm
+start.t <- proc.time()[3]
+fit.gbm3 <- train(classe~., method='gbm', data=training.4,verbose=F,
+                  trControl=trainControl(allowParallel = T,number=3,method='cv'))
+# accur 0.9925586, 0.9856298
+per.list<-mycomb(per.list, fit.gbm3,'gbm3',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: gbm with cross validateion 10
+```{r gbm10, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.gbm10 <- train(classe~., method='gbm', data=training.4,verbose=F,
+                   trControl=trainControl(allowParallel = T,number=10,method='cv'))
+per.list<-mycomb(per.list, fit.gbm10,'gbm10',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: gbm with cross validateion 25
+```{r gbm25, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.gbm25 <- train(classe~., method='gbm', data=training.4,verbose=F,
+                   trControl=trainControl(allowParallel = T,number=25,  method='cv'))
+per.list<-mycomb(per.list, fit.gbm25, 'gbm25',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+
+```
+
+* Model candidate: rpart
+```{r rpart, cache=T,warning=F, message=F}
+## rpart
+start.t <- proc.time()[3]
+fit.rpart <- train(classe ~ .,method="rpart",data=training.4)
+per.list<-mycomb(per.list, fit.rpart, 'rpart',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+
+
+```
+
+* Model candidate: svm with default cross validateion 
+```{r svm, cache=T,warning=F, message=F}
+## e1071
+start.t <- proc.time()[3]
+fit.svm <- svm(classe~., data=training.4)
+per.list<-mycomb(per.list, fit.svm, 'svm',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: svm  with cross validateion 3
+```{r svm3, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.svm3 <- svm(classe~., data=training.4,cross=3)
+per.list<-mycomb(per.list, fit.svm3, 'svm3',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: svm with cross validateion 10
+```{r svm10, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.svm10 <- svm(classe~., data=training.4,cross=10)
+per.list<-mycomb(per.list, fit.svm10, 'svm10',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: svm with cross validateion 25
+```{r svm25, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.svm25 <- svm(classe~., data=training.4,cross=25)
+per.list<-mycomb(per.list, fit.svm25, 'svm25',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: FDA
+```{r fda, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.FDA <- train(classe~., data=training.4,method='fda')
+per.list<-mycomb(per.list, fit.FDA,'FDA',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: bayesglm
+```{r bayesglm, cache=T,warning=F, message=F}
+fit.bayesglm <- train(classe~., data=training.4,method='bayesglm')
+per.list<-mycomb(per.list, fit.bayesglm, 'bayesglm',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: deepnet
+```{r dnn, cache=T,warning=F, message=F}
+start.t <- proc.time()[3]
+fit.dnn <- train(classe~., data=training.4,method='dnn')
+per.list<-mycomb(per.list, fit.dnn, 'dnn',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+
+* Model candidate: nnet
+```{r nnet, cache=T,warning=F, message=F,echo=T,results='hide'}
+start.t <- proc.time()[3]
+fit.nnet <- train(classe~., data=training.4,method='pcaNNet')
+per.list<-mycomb(per.list, fit.nnet, 'nnet',  proc.time()[3] - start.t, training.4, validating)
+
+para_stop(cluster);cluster<-para_start()
+```
+### Model accuracy and computing time
+NOTE: the number after the model name indicate the cross validation number(fold)
+```{r}
+# display model perforamnce 
+rownames(per.list) <-NULL; per.list
+```
+
+
+## Module evaluation and selection
+
+### Modeling method evaulation and consideration
+* Random forest have the best prection accuracy.
+* Random forest with different cross validation bagging have no significant difference on accuracy, with different computing time. 
+* Gbm also have pretty good prediction accuracy on training dataset and validation setset (1 percent lower than random forest). It is only use excution time compare to random forest. It is pretty good alternative on time constrain scenario.
+* **Without** cross validation, the decision tree rpart only give 50% accuracy on traning dataset, and the same accuracy on the validation dataset. It is stable, given 9000+ observation for model training, but with big bias.
+* SVM have very low CPU time usage(only 1 CPU core are used in this package installation), but with not the best accuracy. It could be an candadite for model stacking with other models.
+* SVM with default 0 cross validation have same accuracy as with different number (3, 10, 25) of cross validtion. Though close, it never reach the accraucy of random forest model.
+* Among different method, as bigger cross validation number increase, computing time increase.
+* With given model, no significent change on accuracy as cross validation increase. It could cause by big sample number in traning (about 9000 samples)
+* For most models evaluated, the prediction accuracy difference between training set and validation set are less than 2%, which indicate no significant over-fitting.
+
+### Model method selection consideration
+Since random forest is significant accurate than other model method. With consideration of computation time, model stacking is considered.
+
+### Model selection
+Random forest (with bagging number 3) is selected as prediction model
+
+## Prediction
+
+Prediction with random forest model.
+```{r}
+if (!file.exists('pml-testing.csv')) {
+        download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 'pml-testing.csv')
+}
+
+testing <- data.frame(fread('pml-testing.csv'))
+testing.2<-testing[,-c(1:5)]
+testing.2$new_window<- as.numeric(as.factor(testing.2$new_window))
+
+predict(fit.rf3, newdata = testing.2)
+```
+
+## Conclusion
+For the human activity prediction data we are working on, **random forest** is the best choice. 20 testing observation are predicted with **100%** accurcy by the selected random forest model.
